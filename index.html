@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Tracking</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+</head>
+<body>
+    <h1>Face Tracking Started</h1>
+    <p id="status">Waiting for face tracking...</p>
+
+    <script>
+        var socket = io.connect('http:\\localhost:5000');
+        socket.on('connect', function() {
+            console.log('Connected to the server');
+        });
+
+        socket.on('face_update', function(data) {
+            document.getElementById('status').innerText = data.status;
+        });
+    </script>
+</body>
+</html>
