@@ -13,13 +13,14 @@ chat_id = '-4584813855'
 bot = telebot.TeleBot(bot_token)
 
 # Пути к папкам для сохранения видео
-webcam_video_path = r'D:\pycharm\zxcproject\webcam_video.avi'
-screen_video_path = r'D:\pycharm\zxcproject\screen_video.avi'
+webcam_video_path = r'D:\pycharm\zxcproject\video\webcam'
+screen_video_path = r'video\screen'
 
 # Инициализация MediaPipe и PyAudio
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
 p = pyaudio.PyAudio()
+
 
 # Telegram уведомление
 def send_telegram_message(message):
@@ -27,6 +28,7 @@ def send_telegram_message(message):
         bot.send_message(chat_id, message)
     except Exception as e:
         print(f"Ошибка при отправке сообщения в Telegram: {e}")
+
 
 # Проверка громкости
 def check_microphone_volume(stream):
@@ -37,6 +39,7 @@ def check_microphone_volume(stream):
     elif rms > 300:
         send_telegram_message("Внимание: слишком громкий звук.")
     return rms
+
 
 def main():
     # Инициализация камеры и записи видео
@@ -58,10 +61,10 @@ def main():
     message_interval = 10
 
     with mp_face_mesh.FaceMesh(
-        max_num_faces=5,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+            max_num_faces=5,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
     ) as face_mesh:
         while cap.isOpened():
             success, image = cap.read()
@@ -90,7 +93,7 @@ def main():
                     last_face_detected = False
             else:
                 last_face_detected = True  # Лицо обнаружено, сброс флага
-                
+
                 # Проверка количества лиц и поворота головы
                 num_faces = len(results.multi_face_landmarks)
                 if num_faces > 1 and (current_time - last_faces_message_time >= message_interval):
@@ -135,6 +138,7 @@ def main():
     out_screen.release()
     stream.stop_stream()
     stream.close()
+
 
 if __name__ == "__main__":
     main()
