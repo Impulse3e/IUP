@@ -5,7 +5,8 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-ROOT = Path(SPECPATH).resolve().parents[2]
+# SPECPATH = directory containing this spec (build/windows)
+ROOT = Path(SPECPATH).resolve().parent.parent
 
 datas = []
 binaries = []
@@ -51,7 +52,7 @@ for package in ("mediapipe", "cv2", "pyaudio"):
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
-hiddenimports += collect_submodules("mediapipe")
+hiddenimports += collect_submodules("mediapipe", filter=lambda name: ".genai." not in name)
 
 model_file = ROOT / "models" / "face_landmarker.task"
 if model_file.exists():
