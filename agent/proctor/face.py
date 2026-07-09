@@ -11,15 +11,16 @@ MODEL_URL = (
 
 
 def ensure_model(model_dir: Path) -> Path:
+    model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / "face_landmarker.task"
     if model_path.exists():
         return model_path
 
     cache_dir = writable_root() / "models"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    model_path = cache_dir / "face_landmarker.task"
-    if model_path.exists():
-        return model_path
+    cached = cache_dir / "face_landmarker.task"
+    if cached.exists():
+        return cached
 
     print("Скачиваю модель MediaPipe Face Landmarker...")
     urllib.request.urlretrieve(MODEL_URL, model_path)

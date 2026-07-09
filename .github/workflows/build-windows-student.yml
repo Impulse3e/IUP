@@ -16,6 +16,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONPATH: .
+
 jobs:
   build:
     runs-on: windows-latest
@@ -40,10 +43,23 @@ jobs:
           pip install -r agent/requirements.txt
 
       - name: Download MediaPipe model
-        run: python scripts/download_mediapipe_model.py
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path models | Out-Null
+          $model = "models/face_landmarker.task"
+          if (-not (Test-Path $model)) {
+            $url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+            Write-Host "Downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile $model -UseBasicParsing
+          }
+          if (-not (Test-Path $model)) { throw "Model file missing after download" }
+          Get-Item $model | Format-List Name, Length, FullName
 
       - name: Build IUP Student.exe
-        run: python -m PyInstaller build/windows/iup-student.spec --noconfirm --distpath dist --workpath build/pyinstaller
+        shell: pwsh
+        run: |
+          python -m PyInstaller build/windows/iup-student.spec --noconfirm --distpath dist --workpath build/pyinstaller
+          if (-not (Test-Path "dist/IUP Student.exe")) { throw "Build failed: dist/IUP Student.exe not found" }
 
       - name: Show build output
         shell: pwsh
