@@ -1,0 +1,85 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #4c8bf5;
+  --danger: #ef4444;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+.sidebar {
+  background: var(--panel);
+  padding: 24px;
+  border-right: 1px solid #22262f;
+}
+.sidebar h1 { margin: 0 0 24px; }
+.nav-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid #2a2f3a;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.nav-btn:hover, .nav-btn.active { background: #222833; border-color: var(--accent); }
+main { padding: 24px; }
+.card {
+  background: var(--panel);
+  border: 1px solid #22262f;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+input, select, textarea, button.primary {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border-radius: 8px;
+  border: 1px solid #2a2f3a;
+  background: #10141b;
+  color: var(--text);
+}
+button.primary {
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  margin-top: 16px;
+}
+.muted { color: var(--muted); font-size: 14px; }
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.badge.active { background: rgba(34,197,94,.15); color: var(--ok); }
+.badge.compromised, .badge.high { background: rgba(239,68,68,.15); color: var(--danger); }
+.badge.pending { background: rgba(245,158,11,.15); color: var(--warn); }
+.event {
+  border-left: 3px solid var(--accent);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #11151d;
+}
+.event.resolved { border-color: var(--ok); }
+.event.reminder { border-color: var(--warn); }
+table { width: 100%; border-collapse: collapse; }
+a { color: var(--accent); }
+code { background: #11151d; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+.student-layout .sidebar { min-height: 100vh; }
+label { display: block; margin-top: 8px; font-size: 14px; color: var(--muted); }

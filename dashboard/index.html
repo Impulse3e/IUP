@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IUP Proctoring</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>IUP</h1>
+      <p class="muted">Панель преподавателя</p>
+      <nav id="main-nav">
+        <button data-view="login" class="nav-btn">Вход</button>
+        <button data-view="exams" class="nav-btn">Экзамены</button>
+        <button data-view="sessions" class="nav-btn">Сессии</button>
+        <button data-view="live" class="nav-btn">Live</button>
+        <button data-view="review" class="nav-btn">Review</button>
+        <button data-view="admin" class="nav-btn">Админ</button>
+      </nav>
+      <p style="margin-top:20px"><a href="/student" class="muted">Кабинет участника →</a></p>
+      <div id="user-info" class="muted"></div>
+    </aside>
+    <main id="app"></main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -2,5 +2,11 @@ opencv-python
 mediapipe
 pyaudio
 numpy
-pyTelegramBotAPI
 pyautogui
+python-dotenv
+httpx
+psutil
+Pillow
+
+# Dev / run server from root venv:
+# pip install -r server/requirements.txt
