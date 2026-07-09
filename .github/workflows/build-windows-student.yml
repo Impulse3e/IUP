@@ -1,0 +1,71 @@
+name: Build IUP Student (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "shared/**"
+      - "build/windows/**"
+      - "scripts/build_student_windows.ps1"
+      - "scripts/download_mediapipe_model.py"
+      - "scripts/install_windows.ps1"
+      - ".github/workflows/build-windows-student.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            agent/requirements.txt
+            requirements.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller httpx
+          pip install -r agent/requirements.txt
+
+      - name: Download MediaPipe model
+        run: python scripts/download_mediapipe_model.py
+
+      - name: Build IUP Student.exe
+        run: python -m PyInstaller build/windows/iup-student.spec --noconfirm --distpath dist --workpath build/pyinstaller
+
+      - name: Show build output
+        shell: pwsh
+        run: |
+          Get-ChildItem dist
+          $exe = Get-Item "dist/IUP Student.exe"
+          Write-Host "Size MB:" ([math]::Round($exe.Length / 1MB, 1))
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IUP-Student-Windows
+          path: dist/IUP Student.exe
+          retention-days: 90
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: iup-student-${{ github.run_number }}
+          name: IUP Student (Windows) #${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: true
+          files: dist/IUP Student.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

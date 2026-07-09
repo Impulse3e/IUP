@@ -62,6 +62,22 @@ powershell -ExecutionPolicy Bypass -File scripts\build_student_windows.ps1
 
 Студенту достаточно одного файла `IUP Student.exe`: вход, список экзаменов, запись и прокторинг (камера, экран, микрофон). Настройки сохраняются в `%APPDATA%\iup\`.
 
+### Скачать готовый .exe (без сборки)
+
+После публикации релиза на GitHub:
+
+**https://github.com/Impulse3e/IUP/releases**
+
+Там будет файл `IUP Student.exe` — его можно раздавать студентам напрямую.
+
+Сборка запускается автоматически при push в `main` (GitHub Actions, Windows). Или вручную: **Actions → Build IUP Student (Windows) → Run workflow**.
+
+Скачать последний релиз из терминала:
+
+```bash
+./scripts/download_latest_student_exe.sh
+```
+
 Демо-студент: `student@iup.local` / `student123`
 
 ---
