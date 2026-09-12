@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IUP — Панель преподавателя</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect rx='8' width='32' height='32' fill='%234c8dff'/><text x='16' y='21' text-anchor='middle' font-size='11' font-family='Segoe UI' font-weight='700' fill='%23061018'>IUP</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css?v=20260912h">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">IUP</div>
+        <div class="brand-copy">
+          <strong>IUP Proctoring</strong>
+          <span class="muted">Панель преподавателя</span>
+        </div>
+      </div>
+      <nav id="main-nav">
+        <button data-view="login" class="nav-btn">Вход</button>
+        <button data-view="exams" class="nav-btn">Экзамены</button>
+        <button data-view="sessions" class="nav-btn">Сессии</button>
+        <button data-view="live" class="nav-btn">Live</button>
+        <button data-view="review" class="nav-btn">Проверка</button>
+        <button data-view="admin" class="nav-btn">Админ</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="user-box" class="user-box" hidden>
+          <div id="user-info"></div>
+          <button type="button" class="ghost" id="logout-btn" style="margin-top:10px">Выйти</button>
+        </div>
+        <a href="/student">Кабинет участника →</a>
+      </div>
+    </aside>
+    <main id="app"></main>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/app.js?v=20260912h"></script>
+</body>
+</html>

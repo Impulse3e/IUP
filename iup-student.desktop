@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=IUP Student
+Comment=Приложение участника экзамена IUP
+Exec=/home/impulse3e/IUP/scripts/run_student.sh
+Icon=camera-web
+Terminal=false
+Categories=Education;
