@@ -1,0 +1,14 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+data/
+video/
+models/*.task
+dist/
+build/pyinstaller/
+*.exe
+.DS_Store
+Thumbs.db
+*.db

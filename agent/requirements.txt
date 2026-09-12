@@ -1,0 +1,12 @@
+opencv-python
+mediapipe
+pyaudio
+numpy
+mss
+python-dotenv
+httpx
+psutil
+Pillow
+
+# pyautogui — опциональный fallback для захвата экрана
+pyautogui
