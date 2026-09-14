@@ -114,6 +114,7 @@ function loginView() {
         <label>Пароль<input id="password" type="password" value="student123" autocomplete="current-password"></label>
         <p class="error" id="login-error"></p>
         <button class="primary" id="login-btn">Войти</button>
+        <button class="ghost" id="to-signup" style="margin-top:8px">Создать аккаунт</button>
         <p class="muted" style="margin-top:16px">
           На компьютере удобнее приложение <strong>IUP Student</strong> — тот же email и пароль.
         </p>
@@ -150,11 +151,104 @@ function loginView() {
     }
   };
   document.getElementById("login-btn").onclick = login;
+  document.getElementById("to-signup").onclick = signupView;
   app.querySelectorAll("input").forEach((input) => {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") login();
     });
   });
+}
+
+function signupView() {
+  setAuthLayout(true);
+  app.innerHTML = `
+    <div class="auth-wrap">
+      <div class="card auth-card">
+        <div class="brand">
+          <div class="brand-mark">IUP</div>
+          <div class="brand-copy">
+            <strong>Регистрация</strong>
+            <span class="muted">Аккаунт участника экзамена</span>
+          </div>
+        </div>
+        <label>Имя<input id="full-name" placeholder="Как к вам обращаться" autocomplete="name"></label>
+        <label>Email<input id="email" placeholder="you@mail.ru" autocomplete="username"></label>
+        <label>Пароль<input id="password" type="password" autocomplete="new-password"></label>
+        <label>Ещё раз<input id="password2" type="password" autocomplete="new-password"></label>
+        <p class="muted">Не короче 8 символов. Потом этим же логином входите в IUP Student.</p>
+        <p class="error" id="login-error"></p>
+        <button class="primary" id="signup-btn">Создать аккаунт</button>
+        <button class="ghost" id="to-login" style="margin-top:8px">У меня уже есть вход</button>
+      </div>
+    </div>`;
+  const signup = async () => {
+    const error = document.getElementById("login-error");
+    const button = document.getElementById("signup-btn");
+    error.textContent = "";
+    const password = document.getElementById("password").value;
+    if (password !== document.getElementById("password2").value) {
+      error.textContent = "Пароли не совпадают.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch(`${API}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: document.getElementById("email").value.trim(),
+          password,
+          full_name: document.getElementById("full-name").value.trim(),
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        try {
+          error.textContent = JSON.parse(text).detail || "Не удалось создать аккаунт.";
+        } catch {
+          error.textContent = "Не удалось создать аккаунт.";
+        }
+        return;
+      }
+      state.token = (await response.json()).access_token;
+      localStorage.setItem("iup_student_token", state.token);
+      state.user = await api("/users/me");
+      userInfo.textContent = state.user.full_name;
+      toast("Аккаунт создан");
+      await examsView();
+    } catch {
+      error.textContent = "Не удалось подключиться к серверу.";
+    } finally {
+      button.disabled = false;
+    }
+  };
+  document.getElementById("signup-btn").onclick = signup;
+  document.getElementById("to-login").onclick = loginView;
+  app.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") signup();
+    });
+  });
+}
+
+async function savePassword(prefix = "pw") {
+  const current = document.getElementById(`${prefix}-current`)?.value || "";
+  const next = document.getElementById(`${prefix}-new`)?.value || "";
+  const again = document.getElementById(`${prefix}-again`)?.value || "";
+  if (next !== again) return toast("Пароли не совпадают", "err");
+  try {
+    await api("/users/me/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    toast("Пароль изменён");
+    ["current", "new", "again"].forEach((part) => {
+      const el = document.getElementById(`${prefix}-${part}`);
+      if (el) el.value = "";
+    });
+  } catch (error) {
+    toast(error.message || "Не удалось сменить пароль", "err");
+  }
 }
 
 function logout() {
@@ -225,6 +319,14 @@ async function examsView() {
     <div class="card empty" style="margin-top:16px">
       <p>Открытых экзаменов нет. Попросите преподавателя назначить вам экзамен или включить свободную запись.</p>
     </div>` : ""}
+    <div class="card form-card" style="margin-top:16px" id="password-card">
+      <h3>Смена пароля</h3>
+      <label>Текущий пароль<input id="pw-current" type="password" autocomplete="current-password"></label>
+      <label>Новый пароль<input id="pw-new" type="password" autocomplete="new-password"></label>
+      <label>Ещё раз<input id="pw-again" type="password" autocomplete="new-password"></label>
+      <button class="primary" id="save-password" style="width:auto;margin-top:12px">Сохранить пароль</button>
+      <p class="muted">Не короче 8 символов. В IUP Student потом войдите уже с новым паролем.</p>
+    </div>
     <div class="card" style="margin-top:16px">
       <h3>Как проходить экзамен</h3>
       <p>Запустите <strong>IUP Student</strong>, войдите тем же email и нажмите «Начать экзамен». После этого откроется окно камеры.</p>
@@ -232,6 +334,7 @@ async function examsView() {
     </div>`;
 
   document.getElementById("refresh-btn").onclick = () => examsView();
+  document.getElementById("save-password").onclick = () => savePassword();
   app.querySelectorAll("button[data-id]").forEach((btn) => {
     btn.onclick = () => startExam(btn.dataset.id);
   });
@@ -281,6 +384,10 @@ async function downloadLauncher(sessionId) {
 }
 
 document.getElementById("logout-btn").onclick = logout;
+document.getElementById("password-btn").onclick = () => {
+  document.getElementById("password-card")?.scrollIntoView({ behavior: "smooth" });
+  document.getElementById("pw-current")?.focus();
+};
 document.getElementById("launch-close").onclick = () => {
   launchModal.hidden = true;
 };

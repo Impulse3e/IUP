@@ -21,6 +21,17 @@ class UserCreate(BaseModel):
     role: str = "student"
 
 
+class StudentSignup(BaseModel):
+    email: str
+    password: str
+    full_name: str = ""
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str

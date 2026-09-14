@@ -42,6 +42,8 @@ from server.app.schemas import (
     SessionResponse,
     SessionWithExamResponse,
     StudentSessionResponse,
+    StudentSignup,
+    PasswordChange,
     TokenResponse,
     UserCreate,
     UserResponse,
@@ -198,6 +200,7 @@ def _student_session_detail(db: Session, session: ExamSession) -> StudentSession
 
 
 def _get_or_create_student(db: Session, email: str, full_name: str) -> tuple[User, str | None]:
+    email = email.strip().lower()
     student = db.query(User).filter(User.email == email).first()
     if student:
         return student, None
@@ -272,10 +275,62 @@ def _evidence_response(session_id: str, item: Evidence) -> EvidenceResponse:
 
 @router.post("/auth/login", response_model=TokenResponse)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
+    user = db.query(User).filter(User.email == form_data.username.strip().lower()).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return TokenResponse(access_token=create_access_token(user.id))
+
+
+def _require_password(password: str) -> str:
+    if len(password or "") < 8:
+        raise HTTPException(status_code=400, detail="Пароль должен быть не короче 8 символов")
+    return password
+
+
+def _normalize_email(value: str) -> str:
+    email = (value or "").strip().lower()
+    local, _, domain = email.partition("@")
+    if not local or not domain or "." not in domain or " " in email:
+        raise HTTPException(status_code=400, detail="Укажите корректный email")
+    return email
+
+
+@router.post("/auth/signup", response_model=TokenResponse)
+def signup(payload: StudentSignup, db: Session = Depends(get_db)):
+    email = _normalize_email(str(payload.email))
+    password = _require_password(payload.password)
+    full_name = (payload.full_name or "").strip() or email.split("@")[0]
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=400, detail="Этот email уже зарегистрирован")
+    user = User(
+        email=email,
+        password_hash=hash_password(password),
+        full_name=full_name,
+        role="student",
+    )
+    db.add(user)
+    db.flush()
+    log_audit(db, user.id, "user.signup", f"user:{email}")
+    db.commit()
+    db.refresh(user)
+    return TokenResponse(access_token=create_access_token(user.id))
+
+
+@router.post("/users/me/password")
+def change_password(
+    payload: PasswordChange,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Текущий пароль неверный")
+    new_password = _require_password(payload.new_password)
+    if payload.current_password == new_password:
+        raise HTTPException(status_code=400, detail="Новый пароль должен отличаться")
+    user.password_hash = hash_password(new_password)
+    log_audit(db, user.id, "user.password", f"user:{user.id}")
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/auth/register", response_model=UserResponse)

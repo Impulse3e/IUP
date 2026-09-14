@@ -127,6 +127,17 @@ def _login_error_text(error: Exception) -> str:
     return text
 
 
+def _http_detail(error: Exception) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        try:
+            detail = error.response.json().get("detail")
+            if isinstance(detail, str) and detail:
+                return detail
+        except Exception:
+            pass
+    return _login_error_text(error)
+
+
 def load_config() -> dict:
     if CONFIG_PATH.exists():
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -511,7 +522,9 @@ class StudentLauncher(tk.Tk):
 
         self.login_btn = self._button(wrap, "Войти", self._login, accent=True)
         self.login_btn.pack(fill=tk.X, pady=(self._scaled(18), self._scaled(8)))
-        self._action_buttons = [self.login_btn]
+        signup_btn = self._button(wrap, "Создать аккаунт", self._build_signup)
+        signup_btn.pack(fill=tk.X, pady=(0, self._scaled(8)))
+        self._action_buttons = [self.login_btn, signup_btn]
         if self.show_server.get():
             self.server_box.pack(fill=tk.X, before=self.login_btn)
 
@@ -527,6 +540,49 @@ class StudentLauncher(tk.Tk):
                 justify="left",
             )
         ).pack(fill=tk.X, pady=(self._scaled(8), 0))
+
+    def _build_signup(self) -> None:
+        self._request_id += 1
+        self._set_busy(False)
+        self._clear()
+        wrap = tk.Frame(self, bg=BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=self._scaled(28), pady=self._scaled(24))
+        self._brand(wrap, "Новый участник")
+        tk.Label(wrap, text="Создать аккаунт", bg=BG, fg=TEXT, font=FONT_TITLE, anchor="w").pack(fill=tk.X)
+        self._remember_wrap(
+            tk.Label(
+                wrap,
+                text="После регистрации войдите в экзамен тем же email.",
+                bg=BG,
+                fg=MUTED,
+                font=FONT,
+                justify="left",
+                anchor="w",
+            )
+        ).pack(fill=tk.X, pady=(self._scaled(6), self._scaled(8)))
+
+        self.name_var = tk.StringVar()
+        self.email_var = tk.StringVar(value=self.settings.get("email", ""))
+        self.password_var = tk.StringVar()
+        self.password2_var = tk.StringVar()
+        if not hasattr(self, "server_var"):
+            self.server_var = tk.StringVar(value=self.settings.get("server_url", "http://localhost:8000"))
+        self._label(wrap, "Имя")
+        self._entry(wrap, self.name_var)
+        self._label(wrap, "Email")
+        self._entry(wrap, self.email_var)
+        self._label(wrap, "Пароль")
+        self._entry(wrap, self.password_var, show="*")
+        self._label(wrap, "Пароль ещё раз")
+        self._entry(wrap, self.password2_var, show="*")
+        self._label(wrap, "Адрес сервера")
+        self._entry(wrap, self.server_var)
+        create_btn = self._button(wrap, "Создать и войти", self._signup, accent=True)
+        create_btn.pack(fill=tk.X, pady=(self._scaled(18), self._scaled(8)))
+        back_btn = self._button(wrap, "У меня уже есть вход", self._build_login)
+        back_btn.pack(fill=tk.X)
+        self._action_buttons = [create_btn, back_btn]
+        tk.Label(wrap, textvariable=self.status_var, bg=BG, fg=ACCENT2, font=FONT_SMALL, anchor="w", justify="left").pack(fill=tk.X, pady=(self._scaled(8), 0))
 
     def _build_sessions(self) -> None:
         self._clear()
@@ -644,7 +700,7 @@ class StudentLauncher(tk.Tk):
         extra = []
         if self.available:
             extra.append(("Записаться", self._join_exam))
-        extra.extend([("Обновить", self._load_sessions), ("Выйти", self._build_login)])
+        extra.extend([("Обновить", self._load_sessions), ("Пароль", self._change_password), ("Выйти", self._build_login)])
         for text, command in extra:
             button = self._button(btns, text, command)
             button.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else self._scaled(8), 0), pady=(0, self._scaled(6)))
@@ -790,9 +846,109 @@ class StudentLauncher(tk.Tk):
 
         def on_error(error: Exception) -> None:
             if not silent:
-                messagebox.showerror("Ошибка входа", _login_error_text(error))
+                messagebox.showerror("Ошибка входа", _http_detail(error))
 
         self._in_background(work, on_success, on_error, "Подключение к серверу...")
+
+    def _signup(self) -> None:
+        server = self.server_var.get().rstrip("/")
+        email = self.email_var.get().strip()
+        name = self.name_var.get().strip()
+        password = self.password_var.get()
+        if password != self.password2_var.get():
+            messagebox.showerror("Ошибка", "Пароли не совпадают.")
+            return
+        if len(password) < 8:
+            messagebox.showerror("Ошибка", "Пароль должен быть не короче 8 символов.")
+            return
+
+        def work() -> dict:
+            base = normalize_server_url(server)
+            with httpx.Client(timeout=http_timeout()) as client:
+                response = client.post(
+                    f"{base}/api/auth/signup",
+                    json={"email": email, "password": password, "full_name": name},
+                )
+                response.raise_for_status()
+                token = response.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                sessions_resp = client.get(f"{base}/api/my/sessions", headers=headers)
+                sessions_resp.raise_for_status()
+                available_resp = client.get(f"{base}/api/my/available-exams", headers=headers)
+                available_resp.raise_for_status()
+                return {
+                    "token": token,
+                    "sessions": sessions_resp.json(),
+                    "available": available_resp.json(),
+                }
+
+        def on_success(payload: dict) -> None:
+            self.token = payload["token"]
+            self.sessions = payload["sessions"]
+            self.available = payload["available"]
+            self.settings.update({"server_url": server, "email": email, "password": password})
+            save_config(self.settings)
+            self._show_sessions()
+
+        def on_error(error: Exception) -> None:
+            messagebox.showerror("Регистрация", _http_detail(error))
+
+        self._in_background(work, on_success, on_error, "Создание аккаунта...")
+
+    def _change_password(self) -> None:
+        if not self.token:
+            return
+        win = tk.Toplevel(self)
+        win.title("Смена пароля")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        pad = self._scaled(16)
+        inner = tk.Frame(win, bg=BG, padx=pad, pady=pad)
+        inner.pack(fill=tk.BOTH, expand=True)
+        current_var = tk.StringVar()
+        new_var = tk.StringVar()
+        again_var = tk.StringVar()
+        self._label(inner, "Текущий пароль")
+        self._entry(inner, current_var, show="*")
+        self._label(inner, "Новый пароль")
+        self._entry(inner, new_var, show="*")
+        self._label(inner, "Ещё раз")
+        self._entry(inner, again_var, show="*")
+
+        def submit() -> None:
+            if new_var.get() != again_var.get():
+                messagebox.showerror("Ошибка", "Пароли не совпадают.", parent=win)
+                return
+            if len(new_var.get()) < 8:
+                messagebox.showerror("Ошибка", "Пароль должен быть не короче 8 символов.", parent=win)
+                return
+            server = normalize_server_url(self.settings["server_url"])
+
+            def work() -> None:
+                with httpx.Client(timeout=http_timeout()) as client:
+                    response = client.post(
+                        f"{server}/api/users/me/password",
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        json={"current_password": current_var.get(), "new_password": new_var.get()},
+                    )
+                    response.raise_for_status()
+
+            def on_success(_payload) -> None:
+                self.settings["password"] = new_var.get()
+                save_config(self.settings)
+                if hasattr(self, "password_var"):
+                    self.password_var.set(new_var.get())
+                win.destroy()
+                messagebox.showinfo("IUP", "Пароль изменён.")
+
+            def on_error(error: Exception) -> None:
+                messagebox.showerror("Ошибка", _http_detail(error), parent=win)
+
+            self._in_background(work, on_success, on_error, "Сохранение пароля...")
+
+        save_btn = self._button(inner, "Сохранить", submit, accent=True)
+        save_btn.pack(fill=tk.X, pady=(self._scaled(16), 0))
+        self._action_buttons.append(save_btn)
 
     def _load_sessions(self) -> None:
         server = normalize_server_url(self.settings["server_url"])

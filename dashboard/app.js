@@ -150,7 +150,16 @@ async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const response = await fetch(`${API}${path}`, { ...options, headers });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const detail = JSON.parse(text).detail;
+      throw new Error(typeof detail === "string" ? detail : text);
+    } catch (error) {
+      if (error instanceof Error && error.message && !error.message.startsWith("{") && error.message !== text) throw error;
+      throw new Error(text);
+    }
+  }
   const type = response.headers.get("content-type") || "";
   return type.includes("application/json") ? response.json() : response.text();
 }
@@ -251,6 +260,40 @@ async function loginView() {
       if (event.key === "Enter") login();
     });
   });
+}
+
+async function passwordView() {
+  stopLiveTimer();
+  app.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h2>Смена пароля</h2>
+        <p class="muted">${esc(state.user?.email || "")}</p>
+      </div>
+    </div>
+    <div class="card form-card">
+      <label>Текущий пароль<input id="pw-current" type="password" autocomplete="current-password"></label>
+      <label>Новый пароль<input id="pw-new" type="password" autocomplete="new-password"></label>
+      <label>Ещё раз<input id="pw-again" type="password" autocomplete="new-password"></label>
+      <p class="muted">Не короче 8 символов.</p>
+      <button class="primary" id="save-password">Сохранить</button>
+    </div>`;
+  document.getElementById("save-password").onclick = async () => {
+    const current = document.getElementById("pw-current").value;
+    const next = document.getElementById("pw-new").value;
+    const again = document.getElementById("pw-again").value;
+    if (next !== again) return toast("Пароли не совпадают", "err");
+    try {
+      await api("/users/me/password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      toast("Пароль изменён");
+      showView(defaultView());
+    } catch (error) {
+      toast(error.message || "Не удалось сменить пароль", "err");
+    }
+  };
 }
 
 async function examsView() {
@@ -901,5 +944,9 @@ async function init() {
 }
 
 document.getElementById("logout-btn")?.addEventListener("click", logout);
+document.getElementById("password-btn")?.addEventListener("click", () => {
+  if (!state.user) return loginView();
+  passwordView();
+});
 
 init();
