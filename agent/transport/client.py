@@ -100,6 +100,21 @@ class SessionClient:
         response = self._checked(self._request_retry("post", self._url("/evidence"), data=data, files=files))
         return response.json()
 
+    def upload_evidence_bytes(
+        self,
+        evidence_type: str,
+        content: bytes,
+        filename: str,
+        violation_id: str | None = None,
+        mime: str = "image/jpeg",
+    ) -> dict:
+        files = {"file": (filename, content, mime)}
+        data = {"evidence_type": evidence_type}
+        if violation_id:
+            data["violation_id"] = violation_id
+        response = self._checked(self._request_retry("post", self._url("/evidence"), data=data, files=files))
+        return response.json()
+
     def upload_chunk(self, source: str, chunk_index: int, content: bytes) -> dict:
         files = {"file": (f"{source}_{chunk_index}.bin", content, "application/octet-stream")}
         data = {"source": source, "chunk_index": str(chunk_index)}

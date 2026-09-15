@@ -44,6 +44,7 @@ function parseWhen(value) {
 
 function examPhase(examOrSession) {
   const settings = examOrSession?.settings || {};
+  if (settings.closed || examOrSession?.exam_closed) return "after";
   const now = Date.now();
   const opens = parseWhen(settings.opens_at || examOrSession?.exam_opens_at);
   const closes = parseWhen(settings.closes_at || examOrSession?.exam_closes_at);
@@ -54,6 +55,7 @@ function examPhase(examOrSession) {
 
 function examWindowText(examOrSession) {
   const settings = examOrSession?.settings || {};
+  if (settings.closed || examOrSession?.exam_closed) return "Экзамен закрыт";
   const opens = parseWhen(settings.opens_at || examOrSession?.exam_opens_at);
   const closes = parseWhen(settings.closes_at || examOrSession?.exam_closes_at);
   if (!opens && !closes) return "";
@@ -297,7 +299,7 @@ async function examsView() {
           <div><span class="badge ${esc(session.status)}">${esc(statusLabel(session.status))}</span></div>
           <p class="meta">Риск: ${(session.risk_score ?? 0).toFixed(1)}${examWindowText(session) ? ` · ${esc(examWindowText(session))}` : ""}</p>
           <div class="actions">
-            <button class="primary" data-id="${esc(session.id)}">${session.status === "completed" ? "Открыть снова" : "Начать прокторинг"}</button>
+            <button class="primary" data-id="${esc(session.id)}" ${examPhase(session) === "after" && session.status !== "completed" ? "disabled" : ""}>${examPhase(session) === "after" && !["completed", "cancelled", "compromised"].includes(session.status) ? "Окно закрыто" : session.status === "completed" ? "Открыть снова" : "Начать прокторинг"}</button>
             <button class="ghost" data-dl="${esc(session.id)}">${isWindows ? "Скачать .bat" : "Скачать скрипт"}</button>
           </div>
         </article>`).join("")

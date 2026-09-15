@@ -27,11 +27,61 @@ class EvidenceBuffer:
         if not clip_frames:
             return None
         directory.mkdir(parents=True, exist_ok=True)
-        height, width = clip_frames[0].shape[:2]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output = directory / f"{prefix}_{timestamp}.avi"
-        writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"MJPG"), 8.0, (width, height))
-        for frame in clip_frames:
-            writer.write(frame)
-        writer.release()
+        output = directory / f"{prefix}_{timestamp}.jpg"
+        step = max(1, len(clip_frames) // 6)
+        sampled = clip_frames[::step][:6]
+        jpeg = encode_jpeg_strip(sampled)
+        if not jpeg:
+            return None
+        output.write_bytes(jpeg)
         return str(output)
+
+
+def encode_jpeg_strip(frames: list[np.ndarray], quality: int = 80) -> bytes | None:
+    if not frames:
+        return None
+    thumbs: list[np.ndarray] = []
+    for frame in frames[:6]:
+        if frame is None or getattr(frame, "size", 0) == 0:
+            continue
+        height, width = frame.shape[:2]
+        scale = 320 / max(width, 1)
+        thumbs.append(cv2.resize(frame, (320, max(1, int(height * scale))), interpolation=cv2.INTER_AREA))
+    if not thumbs:
+        return None
+    height = max(item.shape[0] for item in thumbs)
+
+    def pad_height(image: np.ndarray, target: int) -> np.ndarray:
+        if image.shape[0] >= target:
+            return image
+        return cv2.copyMakeBorder(image, 0, target - image.shape[0], 0, 0, cv2.BORDER_CONSTANT)
+
+    def pad_width(image: np.ndarray, target: int) -> np.ndarray:
+        if image.shape[1] >= target:
+            return image
+        return cv2.copyMakeBorder(image, 0, 0, 0, target - image.shape[1], cv2.BORDER_CONSTANT)
+
+    thumbs = [pad_height(item, height) for item in thumbs]
+    if len(thumbs) <= 3:
+        mosaic = np.hstack(thumbs)
+    else:
+        mid = (len(thumbs) + 1) // 2
+        row1 = np.hstack(thumbs[:mid])
+        row2 = np.hstack(thumbs[mid:])
+        width = max(row1.shape[1], row2.shape[1])
+        mosaic = np.vstack([pad_width(row1, width), pad_width(row2, width)])
+    ok, buffer = cv2.imencode(".jpg", mosaic, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    return buffer.tobytes() if ok else None
+
+
+def encode_jpeg(frame: np.ndarray | None, quality: int = 55, max_width: int = 1280) -> bytes | None:
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    image = frame
+    height, width = image.shape[:2]
+    if width > max_width:
+        scale = max_width / width
+        image = cv2.resize(image, (max_width, max(1, int(height * scale))), interpolation=cv2.INTER_AREA)
+    ok, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    return buffer.tobytes() if ok else None

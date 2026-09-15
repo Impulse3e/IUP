@@ -10,13 +10,13 @@ import mediapipe as mp
 import pyaudio
 
 from agent.capture.camera import call_with_camera_pump, open_camera, show_camera_window
-from agent.capture.focus import window_focus_lost
+from agent.capture.focus import foreground_window, match_watch_title, window_focus_lost
 from agent.capture.microphone import calculate_rms
 from agent.capture.screen import screenshot_bgr
 from agent.capture.process_monitor import list_forbidden_processes, monitor_count
 from agent.config import AgentConfig
 from agent.identity_store import load_embedding, save_embedding
-from agent.evidence import EvidenceBuffer
+from agent.evidence import EvidenceBuffer, encode_jpeg
 from agent.precheck import ensure_precheck
 from agent.proctor.engine import ProctorConfig, ProctoringEngine
 from agent.proctor.face import create_face_landmarker, ensure_model
@@ -30,6 +30,12 @@ from shared.constants import ViolationType
 from shared.types import ProctorEvent
 
 AGENT_VERSION = "2.0.0"
+SNAPSHOT_EVENT_TYPES = {
+    ViolationType.FORBIDDEN_PROCESS.value,
+    ViolationType.WINDOW_FOCUS_LOST.value,
+    ViolationType.SECOND_MONITOR.value,
+    ViolationType.WATCHED_TITLE.value,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,6 +87,11 @@ def main() -> None:
 
     client = SessionClient(config.server_url, config.session_token)
     session = client.fetch_session()
+    watch_titles = [
+        str(item).strip().lower()
+        for item in (session.get("watch_titles") or [])
+        if str(item).strip()
+    ]
     if session.get("status") in {"completed", "cancelled"}:
         exit_with_error("Сессия уже завершена.")
     if not gui_mode():
@@ -159,8 +170,10 @@ def main() -> None:
     last_chunk_at = 0.0
     last_preview_at = 0.0
     last_process_check = 0.0
+    last_title_check = 0.0
     last_identity_at = 0.0
     reference_embedding = reference
+    latest_frame: dict = {"image": None}
     jobs: queue.Queue[Callable[[], None] | None] = queue.Queue(maxsize=24)
     frame_interval = 1 / 15
 
@@ -191,18 +204,46 @@ def main() -> None:
     def on_event(event: ProctorEvent) -> None:
         if tamper.check_debugger():
             tamper.mark_compromised("debugger")
-        should_clip = not event.is_resolved and not event.is_reminder and event.type not in last_violation_upload
+        should_snapshot = not event.is_resolved and event.type in SNAPSHOT_EVENT_TYPES
+        webcam_bytes = encode_jpeg(latest_frame.get("image"), quality=60, max_width=640) if should_snapshot else None
+        screen_bytes = None
+        if should_snapshot:
+            try:
+                screen_bytes = encode_jpeg(
+                    screenshot_bgr(prefer_foreground=event.type != ViolationType.SECOND_MONITOR.value),
+                    quality=70,
+                    max_width=1600,
+                )
+            except Exception as error:
+                print(f"Ошибка снимка экрана: {error}")
+        should_clip = (
+            not event.is_resolved
+            and not event.is_reminder
+            and event.type not in SNAPSHOT_EVENT_TYPES
+            and event.type not in last_violation_upload
+        )
         frames = list(evidence_buffer.frames) if should_clip else []
         if should_clip:
             last_violation_upload[event.type] = time.time()
 
-        def job(event=event, frames=frames, should_clip=should_clip) -> None:
+        def job(
+            event=event,
+            frames=frames,
+            should_clip=should_clip,
+            webcam_bytes=webcam_bytes,
+            screen_bytes=screen_bytes,
+        ) -> None:
             try:
                 result = client.post_event(event)
+                violation_id = result.get("id")
+                if webcam_bytes:
+                    client.upload_evidence_bytes("webcam_still", webcam_bytes, "webcam.jpg", violation_id)
+                if screen_bytes:
+                    client.upload_evidence_bytes("screen_still", screen_bytes, "screen.jpg", violation_id)
                 if should_clip:
                     clip = evidence_buffer.save_clip(evidence_dir, event.type, frames=frames)
                     if clip:
-                        client.upload_evidence("video_clip", clip, violation_id=result.get("id"))
+                        client.upload_evidence("video_clip", clip, violation_id=violation_id)
             except Exception as error:
                 print(f"Ошибка отправки события: {error}")
 
@@ -231,6 +272,7 @@ def main() -> None:
                 if cv2.waitKey(30) & 0xFF == ord("q"):
                     break
                 continue
+            latest_frame["image"] = image
 
             evidence_buffer.push(image)
 
@@ -260,6 +302,21 @@ def main() -> None:
             audio_chunk = stream.read(1024, exception_on_overflow=False)
             engine.analyze_audio(calculate_rms(audio_chunk), now)
 
+            if watch_titles and now - last_title_check >= 2:
+                active = foreground_window()
+                matched = match_watch_title(active.get("title") or "", watch_titles)
+                if matched:
+                    title = (active.get("title") or "")[:120]
+                    engine.report_custom(
+                        ViolationType.WATCHED_TITLE,
+                        f"в заголовке окна есть «{matched}»: {title}",
+                        severity="warning",
+                        payload={"title": title, "matched": matched, "process": active.get("process") or ""},
+                    )
+                else:
+                    engine.clear_custom(ViolationType.WATCHED_TITLE)
+                last_title_check = now
+
             if now - last_process_check >= 10:
                 forbidden = list_forbidden_processes()
                 if forbidden:
@@ -267,6 +324,7 @@ def main() -> None:
                         ViolationType.FORBIDDEN_PROCESS,
                         f"обнаружены процессы: {', '.join(forbidden)}",
                         severity="high",
+                        payload={"processes": forbidden},
                     )
                 else:
                     engine.clear_custom(ViolationType.FORBIDDEN_PROCESS)

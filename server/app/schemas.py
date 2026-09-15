@@ -51,6 +51,16 @@ class ExamCreate(BaseModel):
     student_name: str = ""
 
 
+class ExamUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    opens_at: str | None = None
+    closes_at: str | None = None
+    closed: bool | None = None
+    open_enrollment: bool | None = None
+    watch_titles: list[str] | None = None
+
+
 class ExamResponse(BaseModel):
     id: str
     title: str
@@ -93,6 +103,11 @@ class SessionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AgentSessionResponse(SessionResponse):
+    exam_title: str = ""
+    watch_titles: list[str] = Field(default_factory=list)
+
+
 class SessionWithExamResponse(SessionResponse):
     exam_title: str = ""
     student_name: str = ""
@@ -102,6 +117,9 @@ class SessionWithExamResponse(SessionResponse):
     open_events: int = 0
     exam_opens_at: str = ""
     exam_closes_at: str = ""
+    exam_closed: bool = False
+    outcome: str = ""
+    outcome_comment: str = ""
 
 
 class StudentSessionResponse(SessionWithExamResponse):

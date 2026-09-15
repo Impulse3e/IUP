@@ -50,6 +50,7 @@ def risk_delta(event_type: str, severity: str, is_resolved: bool) -> float:
         "window_focus_lost": 8,
         "heartbeat_lost": 15,
         "second_monitor": 10,
+        "watched_title": 6,
         "audio_loud": 5,
         "audio_quiet": 1,
     }

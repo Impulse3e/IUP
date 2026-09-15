@@ -18,8 +18,15 @@ def parse_exam_time(value: Any) -> datetime | None:
     return parsed
 
 
+def exam_is_closed(exam) -> bool:
+    settings = getattr(exam, "settings", None) or {}
+    return bool(settings.get("closed"))
+
+
 def exam_phase(exam) -> str:
     settings = getattr(exam, "settings", None) or {}
+    if exam_is_closed(exam):
+        return "after"
     now = datetime.utcnow()
     opens = parse_exam_time(settings.get("opens_at"))
     closes = parse_exam_time(settings.get("closes_at"))
@@ -31,6 +38,8 @@ def exam_phase(exam) -> str:
 
 
 def exam_window_message(exam) -> str | None:
+    if exam_is_closed(exam):
+        return "Экзамен закрыт преподавателем"
     phase = exam_phase(exam)
     if phase == "before":
         return "Экзамен ещё не начался"

@@ -133,6 +133,7 @@ main { padding: 32px 36px 48px; }
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 
 .page-head p { margin: 6px 0 0; }
@@ -260,9 +261,10 @@ button.ghost:hover, .ghost:hover { background: var(--panel-2); }
 }
 
 .badge.active { background: rgba(52, 211, 153, 0.16); color: var(--ok); }
-.badge.compromised, .badge.high { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
+.badge.compromised, .badge.high, .badge.invalidate { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
 .badge.pending, .badge.precheck { background: rgba(251, 191, 36, 0.16); color: var(--warn); }
-.badge.completed, .badge.cancelled { background: rgba(148, 163, 184, 0.12); color: var(--muted); }
+.badge.completed, .badge.cancelled, .badge.closed { background: rgba(148, 163, 184, 0.12); color: var(--muted); }
+.badge.passed { background: rgba(52, 211, 153, 0.16); color: var(--ok); }
 
 .event {
   border-left: 3px solid var(--accent);
@@ -275,8 +277,16 @@ button.ghost:hover, .ghost:hover { background: var(--panel-2); }
 .event.reminder { border-color: var(--warn); }
 
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
+
+.table-scroll { overflow-x: auto; }
+.table-scroll td:nth-child(5) {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 code {
   background: #10192b;
@@ -310,6 +320,19 @@ body.auth-screen main { padding: 24px; }
 }
 
 .modal[hidden] { display: none; }
+
+.evidence-card {
+  max-width: min(96vw, 1200px);
+  width: auto;
+}
+.evidence-card img {
+  display: block;
+  max-width: min(92vw, 1160px);
+  max-height: 80vh;
+  object-fit: contain;
+  background: #070b14;
+  border-radius: 12px;
+}
 
 .modal-card { width: min(480px, 100%); }
 

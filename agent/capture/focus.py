@@ -92,3 +92,40 @@ def _detect_focus_lost() -> bool:
     if camera_window_minimized() and not title:
         return _cached_lost
     return bool(title)
+
+
+def foreground_window() -> dict[str, str]:
+    """Active window title and process name. Empty on non-Windows."""
+    if sys.platform != "win32":
+        return {"title": "", "process": ""}
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return {"title": "", "process": ""}
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, buf, 512)
+    title = (buf.value or "").strip()
+    process = ""
+    try:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        import psutil
+
+        process = (psutil.Process(pid.value).name() or "").strip()
+    except Exception:
+        process = ""
+    return {"title": title, "process": process}
+
+
+def match_watch_title(title: str, needles: list[str]) -> str | None:
+    hay = (title or "").strip().lower()
+    if not hay or "iup proctoring" in hay:
+        return None
+    for needle in needles:
+        item = (needle or "").strip().lower()
+        if len(item) >= 2 and item in hay:
+            return item
+    return None

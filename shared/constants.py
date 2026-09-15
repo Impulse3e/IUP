@@ -14,6 +14,7 @@ class ViolationType(str, Enum):
     HEARTBEAT_LOST = "heartbeat_lost"
     SECOND_MONITOR = "second_monitor"
     PRE_CHECK_FAILED = "pre_check_failed"
+    WATCHED_TITLE = "watched_title"
 
 
 VIOLATION_LABELS = {
@@ -29,6 +30,7 @@ VIOLATION_LABELS = {
     ViolationType.HEARTBEAT_LOST: "агент не отвечает",
     ViolationType.SECOND_MONITOR: "второй монитор",
     ViolationType.PRE_CHECK_FAILED: "не пройден pre-check",
+    ViolationType.WATCHED_TITLE: "подозрительная вкладка",
 }
 
 

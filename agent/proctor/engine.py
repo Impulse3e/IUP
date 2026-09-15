@@ -90,12 +90,12 @@ class ProctoringEngine:
         interval = self.config.reminder_interval if is_reminder else self.config.alert_cooldown
         return now - state.last_alert_time >= interval
 
-    def _raise(self, violation: ViolationType, message: str, now: float, is_reminder: bool = False, severity: str = "warning") -> None:
+    def _raise(self, violation: ViolationType, message: str, now: float, is_reminder: bool = False, severity: str = "warning", payload: dict | None = None) -> None:
         state = self.violations[violation]
         if not self._can_alert(violation, now, is_reminder):
             return
         prefix = "Напоминание" if is_reminder else "Нарушение"
-        self._emit(violation, f"{prefix}: {message}", severity=severity, is_reminder=is_reminder)
+        self._emit(violation, f"{prefix}: {message}", severity=severity, is_reminder=is_reminder, payload=payload)
         state.last_alert_time = now
         state.count += 1
         self.violation_totals[violation] += 1
@@ -238,14 +238,14 @@ class ProctoringEngine:
             confirm=self.config.identity_confirm_frames,
         )
 
-    def report_custom(self, violation: ViolationType, message: str, severity: str = "high") -> None:
+    def report_custom(self, violation: ViolationType, message: str, severity: str = "high", payload: dict | None = None) -> None:
         now = time.time()
         state = self.violations[violation]
         if not state.active:
             state.active = True
-            self._raise(violation, message, now, severity=severity)
+            self._raise(violation, message, now, severity=severity, payload=payload)
         elif self._can_alert(violation, now, is_reminder=True):
-            self._raise(violation, message, now, is_reminder=True, severity=severity)
+            self._raise(violation, message, now, is_reminder=True, severity=severity, payload=payload)
 
     def clear_custom(self, violation: ViolationType) -> None:
         self._resolve(violation, time.time())

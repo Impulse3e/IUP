@@ -20,6 +20,7 @@ const EVENT_LABELS = {
   agent_tamper: "Вмешательство",
   heartbeat_lost: "Агент не отвечает",
   second_monitor: "Второй монитор",
+  watched_title: "Подозрительная вкладка",
 };
 
 const state = {
@@ -71,6 +72,7 @@ function parseWhen(value) {
 
 function examPhase(exam) {
   const settings = exam?.settings || {};
+  if (settings.closed) return "after";
   const now = Date.now();
   const opens = parseWhen(settings.opens_at);
   const closes = parseWhen(settings.closes_at);
@@ -81,6 +83,7 @@ function examPhase(exam) {
 
 function examWindowText(exam) {
   const settings = exam?.settings || {};
+  if (settings.closed) return "Закрыт вручную";
   const opens = parseWhen(settings.opens_at);
   const closes = parseWhen(settings.closes_at);
   if (!opens && !closes) return "Окно не ограничено";
@@ -98,10 +101,87 @@ function toIsoLocal(value) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
+function toDatetimeLocalValue(iso) {
+  const date = parseWhen(iso);
+  if (!date) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function outcomeLabel(value) {
   if (value === "passed") return "зачёт";
   if (value === "invalidate") return "аннулирована";
   return value || "не вынесено";
+}
+
+function outcomeBadgeClass(value) {
+  if (value === "passed") return "passed";
+  if (value === "invalidate") return "invalidate";
+  return "pending";
+}
+
+function parseWatchTitles(text) {
+  return String(text || "")
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2)
+    .slice(0, 40);
+}
+
+function formatWatchTitles(list) {
+  return (Array.isArray(list) ? list : []).join("\n");
+}
+
+function evidenceItems(violationId) {
+  return (state.evidence || []).filter((item) => item.violation_id === violationId);
+}
+
+function evidenceButtonsHtml(violationId) {
+  const items = evidenceItems(violationId);
+  if (!items.length) return "—";
+  const label = (type) => {
+    if (type === "screen_still") return "Стол";
+    if (type === "webcam_still") return "Камера";
+    if (type === "video_clip") return "Клип";
+    return "Файл";
+  };
+  return items.map((item) => (
+    `<button class="ghost" data-clip="${esc(item.url)}" data-kind="${item.type === "video_clip" ? "video" : "image"}" style="width:auto;margin:0">${label(item.type)}</button>`
+  )).join(" ");
+}
+
+function closeEvidencePreview() {
+  const modal = document.getElementById("evidence-modal");
+  const img = document.getElementById("evidence-image");
+  if (!modal || !img) return;
+  modal.hidden = true;
+  if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+  img.dataset.url = "";
+  img.removeAttribute("src");
+}
+
+function bindEvidenceButtons(root = document) {
+  root.querySelectorAll("button[data-clip]").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.onclick = async () => {
+      try {
+        const url = await authedBlob(btn.dataset.clip);
+        const modal = document.getElementById("evidence-modal");
+        const img = document.getElementById("evidence-image");
+        if (!modal || !img) {
+          window.open(url, "_blank");
+          return;
+        }
+        if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+        img.dataset.url = url;
+        img.src = url;
+        modal.hidden = false;
+      } catch {
+        toast("Не удалось открыть снимок", "err");
+      }
+    };
+  });
 }
 
 function isOnline(session) {
@@ -313,15 +393,16 @@ async function examsView() {
       <label>Имя студента<input id="exam-student-name" placeholder="для нового аккаунта"></label>
       <label>Начало окна<input id="exam-opens" type="datetime-local"></label>
       <label>Конец окна<input id="exam-closes" type="datetime-local"></label>
+      <label>Слова в заголовках вкладок<textarea id="exam-watch" rows="3" placeholder="chatgpt&#10;переводчик&#10;wikipedia"></textarea></label>
       <button class="primary" id="create-exam">Создать</button>
-      <p class="muted">Пустые даты — экзамен открыт всегда. Вне окна студент не сможет войти и события не пишутся.</p>
+      <p class="muted">Пустые даты — экзамен открыт всегда. Слова — предупреждение, если они есть в названии активного окна. К событию приложатся кадр стола и камеры. Студента не блокируем.</p>
     </div>
     <div class="grid" style="margin-top:16px">
       ${state.exams.map((exam) => `
         <article class="card exam-card">
           <h3>${esc(exam.title)}</h3>
           <p class="meta">${esc(exam.description || "Без описания")}</p>
-          <p class="meta">${esc(examWindowText(exam))}</p>
+          <p class="meta">${exam.settings?.closed ? `<span class="badge closed">закрыт</span> ` : ""}<span class="badge ${examPhase(exam) === "open" ? "active" : "pending"}">${esc(examWindowText(exam))}</span></p>
           <div class="actions">
             <button class="primary" data-exam="${esc(exam.id)}">Управление</button>
           </div>
@@ -341,6 +422,7 @@ async function examsView() {
           open_enrollment: true,
           opens_at: toIsoLocal(document.getElementById("exam-opens").value),
           closes_at: toIsoLocal(document.getElementById("exam-closes").value),
+          watch_titles: parseWatchTitles(document.getElementById("exam-watch").value),
         },
       }),
     });
@@ -361,7 +443,33 @@ async function examsView() {
 
 async function examDetailView() {
   if (!state.selectedExam) return showView("exams");
+  try {
+    state.selectedExam = await api(`/exams/${state.selectedExam.id}`);
+  } catch {
+    /* keep the list copy if refresh fails */
+  }
   const sessions = await api(`/exams/${state.selectedExam.id}/sessions`);
+  const settings = state.selectedExam.settings || {};
+  const closed = Boolean(settings.closed);
+  const passed = sessions.filter((s) => s.outcome === "passed").length;
+  const invalidated = sessions.filter((s) => s.outcome === "invalidate").length;
+  const undecided = sessions.length - passed - invalidated;
+  const inProgress = sessions.filter((s) => ["pending", "precheck", "active"].includes(s.status)).length;
+  const ranked = [...sessions].sort((left, right) => {
+    const rank = (item) => {
+      if (["active", "precheck"].includes(item.status)) return 0;
+      if (!item.outcome && item.status === "pending") return 1;
+      if (item.outcome === "invalidate") return 2;
+      if (!item.outcome) return 3;
+      return 4;
+    };
+    const byRank = rank(left) - rank(right);
+    if (byRank) return byRank;
+    return String(left.student_name || left.student_email || "").localeCompare(
+      String(right.student_name || right.student_email || ""),
+      "ru",
+    );
+  });
   app.innerHTML = `
     <div class="page-head">
       <div>
@@ -371,6 +479,26 @@ async function examDetailView() {
       <button class="ghost" id="back-exams" style="width:auto">← К списку</button>
     </div>
     <div class="card form-card">
+      <h3>Окно экзамена</h3>
+      <label>Начало окна<input id="exam-opens" type="datetime-local" value="${esc(toDatetimeLocalValue(settings.opens_at))}"></label>
+      <label>Конец окна<input id="exam-closes" type="datetime-local" value="${esc(toDatetimeLocalValue(settings.closes_at))}"></label>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="primary" id="save-window" style="width:auto;margin:0">Сохранить окно</button>
+        ${closed
+          ? `<button class="ghost" id="reopen-exam" style="width:auto;margin:0">Открыть снова</button>`
+          : `<button class="ghost" id="close-exam" style="width:auto;margin:0">Закрыть экзамен</button>`}
+      </div>
+      <p class="muted">${closed
+        ? "Экзамен закрыт вручную: студенты не входят, события не пишутся. Даты окна сохраняются и снова действуют после «Открыть снова»."
+        : "Пустые даты — окно не ограничено. «Закрыть экзамен» сразу останавливает вход и запись, не дожидаясь конца окна."}</p>
+    </div>
+    <div class="card form-card">
+      <h3>Контроль вкладок</h3>
+      <label>Слова в заголовке активного окна<textarea id="exam-watch" rows="4" placeholder="chatgpt&#10;claude&#10;переводчик&#10;wikipedia">${esc(formatWatchTitles(settings.watch_titles))}</textarea></label>
+      <button class="primary" id="save-watch" style="width:auto;margin-top:12px">Сохранить список</button>
+      <p class="muted">Одно слово или фраза на строку. Если оно есть в названии окна (вкладки Chrome/Edge), преподавателю уйдёт предупреждение со снимком стола и камеры. Не пишите «chrome» — сработает на любую вкладку.</p>
+    </div>
+    <div class="card form-card">
       <h3>Назначить участнику</h3>
       <label>Email<input id="student-email" placeholder="student@mail.ru"></label>
       <label>Имя<input id="student-name" placeholder="для нового студента"></label>
@@ -378,19 +506,35 @@ async function examDetailView() {
       <p class="muted">Если студента ещё нет, будет создан аккаунт с одноразовым паролем.</p>
     </div>
     <div class="card" style="margin-top:16px">
-      <h3>Сессии (${sessions.length})</h3>
-      <table>
-        <thead><tr><th>Студент</th><th>Статус</th><th>Риск</th><th></th></tr></thead>
-        <tbody>
-          ${sessions.map((s) => `
-            <tr>
-              <td>${esc(s.student_name || s.student_email)}</td>
-              <td><span class="badge ${esc(s.status)}">${esc(statusLabel(s.status))}</span></td>
-              <td>${s.risk_score.toFixed(1)}</td>
-              <td><button class="ghost" data-session="${esc(s.id)}" style="width:auto;margin:0">Мониторинг</button></td>
-            </tr>`).join("")}
-        </tbody>
-      </table>
+      <div class="page-head" style="margin-bottom:8px">
+        <div>
+          <h3>Исходы группы</h3>
+          <p class="muted">${sessions.length} участников · зачёт ${passed} · аннулировано ${invalidated} · без решения ${undecided}${inProgress ? ` · ещё идут ${inProgress}` : ""}</p>
+        </div>
+        <div class="btn-row">
+          <button class="ghost" id="export-group-csv" style="width:auto;margin:0">CSV</button>
+          <button class="ghost" id="export-group-html" style="width:auto;margin:0">HTML</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Студент</th><th>Статус</th><th>Риск</th><th>Исход</th><th>Комментарий</th><th></th></tr></thead>
+          <tbody>
+            ${ranked.map((s) => `
+              <tr>
+                <td>${esc(s.student_name || s.student_email)}<div class="muted">${esc(s.student_email || "")}</div></td>
+                <td><span class="badge ${esc(s.status)}">${esc(statusLabel(s.status))}</span></td>
+                <td>${Number(s.risk_score || 0).toFixed(1)}</td>
+                <td><span class="badge ${outcomeBadgeClass(s.outcome)}">${esc(outcomeLabel(s.outcome))}</span></td>
+                <td title="${esc(s.outcome_comment || "")}">${esc(s.outcome_comment || "—")}</td>
+                <td class="btn-row">
+                  <button class="ghost" data-session="${esc(s.id)}" style="width:auto;margin:0">Live</button>
+                  <button class="ghost" data-review="${esc(s.id)}" style="width:auto;margin:0">Проверка</button>
+                </td>
+              </tr>`).join("") || "<tr><td colspan='6' class='muted'>Сессий пока нет</td></tr>"}
+          </tbody>
+        </table>
+      </div>
     </div>`;
 
   document.getElementById("assign-btn").onclick = async () => {
@@ -410,9 +554,81 @@ async function examDetailView() {
     }
     examDetailView();
   };
+  document.getElementById("save-window").onclick = async () => {
+    try {
+      state.selectedExam = await api(`/exams/${state.selectedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          opens_at: toIsoLocal(document.getElementById("exam-opens").value),
+          closes_at: toIsoLocal(document.getElementById("exam-closes").value),
+        }),
+      });
+      toast("Окно экзамена сохранено");
+      examDetailView();
+    } catch (error) {
+      toast(error.message || "Не удалось сохранить окно", "err");
+    }
+  };
+  document.getElementById("save-watch").onclick = async () => {
+    try {
+      state.selectedExam = await api(`/exams/${state.selectedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          watch_titles: parseWatchTitles(document.getElementById("exam-watch").value),
+        }),
+      });
+      toast("Список вкладок сохранён");
+      examDetailView();
+    } catch (error) {
+      toast(error.message || "Не удалось сохранить список", "err");
+    }
+  };
+  document.getElementById("close-exam")?.addEventListener("click", async () => {
+    if (!window.confirm("Закрыть экзамен сейчас? Студенты не смогут войти, события перестанут писаться.")) return;
+    try {
+      state.selectedExam = await api(`/exams/${state.selectedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ closed: true }),
+      });
+      toast("Экзамен закрыт");
+      examDetailView();
+    } catch (error) {
+      toast(error.message || "Не удалось закрыть экзамен", "err");
+    }
+  });
+  document.getElementById("reopen-exam")?.addEventListener("click", async () => {
+    try {
+      state.selectedExam = await api(`/exams/${state.selectedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ closed: false }),
+      });
+      toast("Экзамен снова открыт");
+      examDetailView();
+    } catch (error) {
+      toast(error.message || "Не удалось открыть экзамен", "err");
+    }
+  });
+  async function downloadGroup(format, filename, mime) {
+    const data = await api(`/exams/${state.selectedExam.id}/outcomes?format=${format}`);
+    const body = format === "csv" ? data.csv : data;
+    const blob = new Blob([body], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+  }
+  const slug = (state.selectedExam.title || "exam").replace(/[^\w\-]+/g, "_").slice(0, 40);
+  document.getElementById("export-group-csv").onclick = () => downloadGroup("csv", `${slug}_outcomes.csv`, "text/csv");
+  document.getElementById("export-group-html").onclick = () => downloadGroup("html", `${slug}_outcomes.html`, "text/html");
   document.getElementById("back-exams").onclick = () => showView("exams");
   app.querySelectorAll("button[data-session]").forEach((btn) => {
     btn.onclick = () => openSession(sessions.find((s) => s.id === btn.dataset.session));
+  });
+  app.querySelectorAll("button[data-review]").forEach((btn) => {
+    btn.onclick = () => {
+      state.selectedSession = sessions.find((s) => s.id === btn.dataset.review);
+      showView("review");
+    };
   });
 }
 
@@ -545,7 +761,7 @@ async function loadEvidence() {
 }
 
 function evidenceFor(violationId) {
-  return state.evidence.find((item) => item.violation_id === violationId);
+  return evidenceItems(violationId)[0];
 }
 
 async function authedBlob(url) {
@@ -727,32 +943,32 @@ function renderLiveFeed() {
     <div class="event ${v.is_resolved ? "resolved" : ""} ${v.is_reminder ? "reminder" : ""}">
       <strong>${esc(eventLabel(v.type))}</strong> — ${esc(v.message)}
       <div class="muted">${new Date(v.created_at).toLocaleString()}</div>
+      <div class="btn-row" style="margin-top:8px">${evidenceButtonsHtml(v.id)}</div>
     </div>`).join("") || "<p class='muted'>Событий пока нет</p>";
+  bindEvidenceButtons(feed);
 }
 
 function renderLiveClips() {
   const root = document.getElementById("live-clips");
   if (!root) return;
-  const clips = state.evidence.filter((item) => item.type === "video_clip").slice(0, 8);
+  const clips = state.evidence.filter((item) => (
+    item.type === "video_clip" || item.type === "screen_still" || item.type === "webcam_still"
+  )).slice(0, 12);
   if (!clips.length) {
-    root.innerHTML = "<p class='muted'>Клипов пока нет</p>";
+    root.innerHTML = "<p class='muted'>Снимков пока нет</p>";
     return;
   }
+  const label = (type) => {
+    if (type === "screen_still") return "Стол";
+    if (type === "webcam_still") return "Камера";
+    return "Клип";
+  };
   root.innerHTML = clips.map((item) => `
     <div class="clip-row">
-      <button class="ghost" data-clip="${esc(item.url)}" style="width:auto;margin:0">Открыть клип</button>
+      <button class="ghost" data-clip="${esc(item.url)}" data-kind="image" style="width:auto;margin:0">${label(item.type)}</button>
       <span class="muted">${new Date(item.created_at).toLocaleString()}</span>
     </div>`).join("");
-  root.querySelectorAll("button[data-clip]").forEach((btn) => {
-    btn.onclick = async () => {
-      try {
-        const url = await authedBlob(btn.dataset.clip);
-        window.open(url, "_blank");
-      } catch {
-        toast("Не удалось открыть клип", "err");
-      }
-    };
-  });
+  bindEvidenceButtons(root);
 }
 
 async function reviewView() {
@@ -786,22 +1002,19 @@ async function reviewView() {
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Тип</th><th>Сообщение</th><th>Клип</th><th>Решение</th></tr></thead>
+        <thead><tr><th>Тип</th><th>Сообщение</th><th>Снимки</th><th>Решение</th></tr></thead>
         <tbody>
-          ${state.violations.map((v) => {
-            const clip = evidenceFor(v.id);
-            return `
+          ${state.violations.map((v) => `
             <tr>
               <td>${esc(eventLabel(v.type))}</td>
               <td>${esc(v.message)}</td>
-              <td>${clip ? `<button class="ghost" data-clip="${esc(clip.url)}" style="width:auto;margin:0">Клип</button>` : "—"}</td>
+              <td class="btn-row">${evidenceButtonsHtml(v.id)}</td>
               <td class="btn-row">
                 <button class="ghost" data-v="${esc(v.id)}" data-d="confirmed" style="width:auto;margin:0">Подтвердить</button>
                 <button class="ghost" data-v="${esc(v.id)}" data-d="false_positive" style="width:auto;margin:0">Ложное</button>
                 <button class="ghost" data-v="${esc(v.id)}" data-d="invalidate" style="width:auto;margin:0">Аннулировать</button>
               </td>
-            </tr>`;
-          }).join("") || "<tr><td colspan='4' class='muted'>Событий нет</td></tr>"}
+            </tr>`).join("") || "<tr><td colspan='4' class='muted'>Событий нет</td></tr>"}
         </tbody>
       </table>
     </div>
@@ -849,16 +1062,7 @@ async function reviewView() {
   document.getElementById("export-csv").onclick = () => downloadExport("csv", `session_${state.selectedSession.id}.csv`, "text/csv");
   document.getElementById("export-json").onclick = () => downloadExport("json", `session_${state.selectedSession.id}.json`, "application/json");
   document.getElementById("export-html").onclick = () => downloadExport("html", `session_${state.selectedSession.id}.html`, "text/html");
-  app.querySelectorAll("button[data-clip]").forEach((btn) => {
-    btn.onclick = async () => {
-      try {
-        const url = await authedBlob(btn.dataset.clip);
-        window.open(url, "_blank");
-      } catch {
-        toast("Не удалось открыть клип", "err");
-      }
-    };
-  });
+  bindEvidenceButtons(app);
 }
 
 async function adminView() {
@@ -947,6 +1151,10 @@ document.getElementById("logout-btn")?.addEventListener("click", logout);
 document.getElementById("password-btn")?.addEventListener("click", () => {
   if (!state.user) return loginView();
   passwordView();
+});
+document.getElementById("evidence-close")?.addEventListener("click", closeEvidencePreview);
+document.getElementById("evidence-modal")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeEvidencePreview();
 });
 
 init();

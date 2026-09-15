@@ -8,10 +8,10 @@ import secrets
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, case, func
@@ -28,6 +28,8 @@ from server.app.schemas import (
     ExamCreate,
     ExamCreateResponse,
     ExamResponse,
+    ExamUpdate,
+    AgentSessionResponse,
     ExportResponse,
     HeartbeatRequest,
     IdentityRequest,
@@ -59,7 +61,8 @@ from server.app.security import (
 )
 from server.app.identity import embedding_distance
 from server.app.backup import backup_database
-from server.app.exam_window import exam_phase, exam_window_message
+from server.app.exam_window import exam_phase, exam_window_message, parse_exam_time
+from server.app.media import video_file_to_jpeg
 from server.app.services import dispatch_webhooks, log_audit, risk_delta
 from server.app.storage import get_storage
 from server.app.watchdog import resolve_heartbeat_if_needed
@@ -180,6 +183,10 @@ def _session_public(db: Session, session: ExamSession) -> dict:
     settings = exam.settings if exam else {}
     data["exam_opens_at"] = str(settings.get("opens_at") or "")
     data["exam_closes_at"] = str(settings.get("closes_at") or "")
+    data["exam_closed"] = bool(settings.get("closed"))
+    summary = session.summary or {}
+    data["outcome"] = str(summary.get("outcome") or "")
+    data["outcome_comment"] = str(summary.get("outcome_comment") or "")
     data["critical_open"] = 0
     data["open_events"] = 0
     return data
@@ -367,6 +374,7 @@ def create_exam(
 ):
     exam_settings = payload.settings or {}
     exam_settings.setdefault("open_enrollment", True)
+    exam_settings["watch_titles"] = _normalize_watch_titles(exam_settings.get("watch_titles"))
     exam = Exam(
         title=payload.title,
         description=payload.description,
@@ -399,6 +407,99 @@ def create_exam(
     data["initial_password"] = initial_password
     data["created_student_email"] = created_student_email
     return ExamCreateResponse(**data)
+
+
+def _normalize_window_value(value: str | None) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    parsed = parse_exam_time(text)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="Некорректная дата окна экзамена")
+    return parsed.isoformat()
+
+
+def _normalize_watch_titles(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.replace(";", ",").replace("\n", ",").split(",")
+    else:
+        parts = list(value)
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in parts:
+        item = str(part or "").strip().lower()
+        if len(item) < 2 or item in seen:
+            continue
+        seen.add(item)
+        result.append(item[:80])
+        if len(result) >= 40:
+            break
+    return result
+
+
+def _apply_exam_settings(exam: Exam, settings: dict) -> None:
+    opens = parse_exam_time(settings.get("opens_at"))
+    closes = parse_exam_time(settings.get("closes_at"))
+    if opens and closes and opens >= closes:
+        raise HTTPException(status_code=400, detail="Начало окна должно быть раньше конца")
+    exam.settings = settings
+    flag_modified(exam, "settings")
+
+
+@router.patch("/exams/{exam_id}", response_model=ExamResponse)
+def update_exam(
+    exam_id: str,
+    payload: ExamUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("teacher", "admin")),
+):
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    data = payload.model_dump(exclude_unset=True)
+    settings = dict(exam.settings or {})
+    if "title" in data:
+        title = (data.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Введите название")
+        exam.title = title
+    if "description" in data:
+        exam.description = data.get("description") or ""
+    if data.get("open_enrollment") is not None:
+        settings["open_enrollment"] = bool(data["open_enrollment"])
+    if "opens_at" in data:
+        settings["opens_at"] = _normalize_window_value(data.get("opens_at"))
+    if "closes_at" in data:
+        settings["closes_at"] = _normalize_window_value(data.get("closes_at"))
+    if data.get("closed") is True:
+        settings["closed"] = True
+        settings["closed_at"] = datetime.utcnow().isoformat()
+    elif data.get("closed") is False:
+        settings["closed"] = False
+        settings.pop("closed_at", None)
+    if "watch_titles" in data:
+        settings["watch_titles"] = _normalize_watch_titles(data.get("watch_titles"))
+    _apply_exam_settings(exam, settings)
+    log_audit(db, user.id, "exam.update", f"exam:{exam.id}")
+    db.commit()
+    db.refresh(exam)
+    return exam
+
+
+@router.get("/exams/{exam_id}", response_model=ExamResponse)
+def get_exam(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("teacher", "proctor", "admin")),
+):
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    return exam
 
 
 @router.get("/exams", response_model=list[ExamResponse])
@@ -543,6 +644,90 @@ def exam_sessions(
         .all()
     )
     return [_session_detail(db, session) for session in sessions]
+
+
+def _exam_outcome_counts(sessions: list[ExamSession]) -> dict[str, int]:
+    counts = {"total": len(sessions), "passed": 0, "invalidate": 0, "undecided": 0, "in_progress": 0}
+    for session in sessions:
+        outcome = (session.summary or {}).get("outcome")
+        if outcome == "passed":
+            counts["passed"] += 1
+        elif outcome == "invalidate":
+            counts["invalidate"] += 1
+        else:
+            counts["undecided"] += 1
+        if session.status in ACTIVE_SESSION_STATUSES:
+            counts["in_progress"] += 1
+    return counts
+
+
+@router.get("/exams/{exam_id}/outcomes")
+def exam_outcomes(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("teacher", "proctor", "admin")),
+    export_format: str = Query("json", alias="format"),
+):
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    sessions = (
+        db.query(ExamSession)
+        .filter(ExamSession.exam_id == exam_id)
+        .order_by(ExamSession.created_at.asc())
+        .all()
+    )
+    details = [_session_detail(db, session) for session in sessions]
+    counts = _exam_outcome_counts(sessions)
+    if export_format == "json":
+        return {
+            "exam": ExamResponse.model_validate(exam).model_dump(mode="json"),
+            "counts": counts,
+            "sessions": [item.model_dump(mode="json") for item in details],
+        }
+    if export_format == "html":
+        rows = []
+        for item in details:
+            payload = item.model_dump(mode="json")
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(payload.get('student_name') or ''))}</td>"
+                f"<td>{html.escape(str(payload.get('student_email') or ''))}</td>"
+                f"<td>{html.escape(str(payload.get('status') or ''))}</td>"
+                f"<td>{html.escape(str(payload.get('risk_score') or 0))}</td>"
+                f"<td>{html.escape(str(payload.get('outcome') or 'не вынесено'))}</td>"
+                f"<td>{html.escape(str(payload.get('outcome_comment') or ''))}</td>"
+                "</tr>"
+            )
+        body = "".join(rows) or "<tr><td colspan='6'>Сессий нет</td></tr>"
+        title = html.escape(exam.title)
+        return HTMLResponse(
+            f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Исходы — {title}</title>
+<style>body{{font-family:Segoe UI,sans-serif;padding:24px;color:#111}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:8px;text-align:left}}</style>
+</head><body>
+<h1>{title}</h1>
+<p>Участников: {counts['total']} · зачёт {counts['passed']} · аннулировано {counts['invalidate']} · без решения {counts['undecided']}</p>
+<table><thead><tr><th>Студент</th><th>Email</th><th>Статус</th><th>Риск</th><th>Исход</th><th>Комментарий</th></tr></thead>
+<tbody>{body}</tbody></table>
+</body></html>"""
+        )
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["student_name", "student_email", "status", "risk_score", "outcome", "outcome_comment", "started_at", "ended_at"])
+    for item in details:
+        payload = item.model_dump(mode="json")
+        writer.writerow([
+            payload.get("student_name"),
+            payload.get("student_email"),
+            payload.get("status"),
+            payload.get("risk_score"),
+            payload.get("outcome") or "",
+            payload.get("outcome_comment") or "",
+            payload.get("started_at") or "",
+            payload.get("ended_at") or "",
+        ])
+    return {"exam_id": exam_id, "csv": buffer.getvalue(), "counts": counts}
 
 
 @router.post("/exams/{exam_id}/sessions/by-email", response_model=SessionAssignResponse)
@@ -718,9 +903,15 @@ def list_sessions(
     return _sessions_detail(db, sessions)
 
 
-@router.get("/sessions/token/{token}", response_model=SessionResponse)
+@router.get("/sessions/token/{token}", response_model=AgentSessionResponse)
 def get_session_by_token(token: str, db: Session = Depends(get_db)):
-    return _session_by_token(db, token)
+    session = _session_by_token(db, token)
+    exam = db.get(Exam, session.exam_id)
+    data = SessionResponse.model_validate(session).model_dump()
+    settings = exam.settings if exam else {}
+    data["exam_title"] = exam.title if exam else ""
+    data["watch_titles"] = _normalize_watch_titles((settings or {}).get("watch_titles"))
+    return AgentSessionResponse(**data)
 
 
 @router.post("/sessions/token/{token}/consent")
@@ -929,7 +1120,11 @@ def download_evidence(
     if not item:
         raise HTTPException(status_code=404, detail="Evidence not found")
     path = _safe_stored_file(item.path)
-    return FileResponse(path, media_type=_media_type_for(path), filename=path.name)
+    if path.suffix.lower() == ".avi":
+        jpeg = video_file_to_jpeg(path)
+        if jpeg:
+            return Response(content=jpeg, media_type="image/jpeg")
+    return FileResponse(path, media_type=_media_type_for(path), filename=path.name, content_disposition_type="inline")
 
 
 @router.get("/sessions/{session_id}/live-frame")
